@@ -1,0 +1,79 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Python: Store API (8002)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/store_api.py",
+            "console": "integratedTerminal",
+            "env": {
+                "STORE_API_PORT": "8002"
+            },
+            "cwd": "${workspaceFolder}",
+            "envFile": "${workspaceFolder}/.env",
+            "justMyCode": true
+        },
+        {
+            "name": "Python: Orders Agent (8001)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/orders_agent.py",
+            "console": "integratedTerminal",
+            "env": {
+                "STORE_API_URL": "http://127.0.0.1:8002",
+                "ORDERS_AGENT_URL": "http://127.0.0.1:8001",
+                "ORDERS_AGENT_PUBLIC_URL": "http://127.0.0.1:8001",
+                "ORDERS_AGENT_PORT": "8001"
+            },
+            "cwd": "${workspaceFolder}",
+            "envFile": "${workspaceFolder}/.env",
+            "justMyCode": true
+        },
+        {
+            "name": "Python: Orchestrator (8000)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/orchestrator.py",
+            "console": "integratedTerminal",
+            "env": {
+                "STORE_API_URL": "http://127.0.0.1:8002",
+                "ORDERS_AGENT_URL": "http://127.0.0.1:8001",
+                "ORDERS_AGENT_PUBLIC_URL": "http://127.0.0.1:8001",
+                "ORCHESTRATOR_PORT": "8000",
+                "CHECKPOINTER": "memory"
+            },
+            "cwd": "${workspaceFolder}",
+            "envFile": "${workspaceFolder}/.env",
+            "justMyCode": true
+        },
+        {
+            "name": "Python: Run all three services",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/store_api.py",
+            "console": "integratedTerminal",
+            "env": {
+                "STORE_API_PORT": "8002",
+                "STORE_API_URL": "http://127.0.0.1:8002",
+                "ORDERS_AGENT_URL": "http://127.0.0.1:8001",
+                "ORDERS_AGENT_PUBLIC_URL": "http://127.0.0.1:8001",
+                "ORCHESTRATOR_PORT": "8000",
+                "CHECKPOINTER": "memory"
+            },
+            "cwd": "${workspaceFolder}",
+            "envFile": "${workspaceFolder}/.env",
+            "justMyCode": true
+        }
+    ],
+    "compounds": [
+        {
+            "name": "All Services (Store API + Orders Agent + Orchestrator)",
+            "configurations": [
+                "Python: Store API (8002)",
+                "Python: Orders Agent (8001)",
+                "Python: Orchestrator (8000)"
+            ]
+        }
+    ]
+}
