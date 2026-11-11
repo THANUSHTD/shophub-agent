@@ -1,0 +1,101 @@
+# ShopHub Agent - Docker Compose
+# Run: docker compose up --build
+#
+# Services:
+#   store-api    Mock Store API (port 8002)
+#   orders-agent Orders sub-agent over A2A (port 8001)
+#   orchestrator LangGraph orchestrator + chat API (port 8000)
+#   postgres     Postgres 16 for LangGraph checkpoints (host port 5433)
+
+name: shophub-agent
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: shophub
+      POSTGRES_PASSWORD: shophub
+      POSTGRES_DB: shophub
+    ports:
+      - "5433:5432"
+    volumes:
+      - shophub_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U shophub -d shophub"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  store-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: shophub-agent:latest
+    environment:
+      LLM_MODE: ${LLM_MODE:-fake}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4.1-mini}
+      CHECKPOINTER: memory
+      STORE_API_PORT: 8002
+    ports:
+      - "8002:8002"
+    command: uvicorn store_api:app --host 0.0.0.0 --port 8002
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8002/health')"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  orders-agent:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: shophub-agent:latest
+    environment:
+      STORE_API_URL: http://store-api:8002
+      ORDERS_AGENT_URL: http://orders-agent:8001
+      ORDERS_AGENT_PUBLIC_URL: http://orders-agent:8001
+      ORDERS_AGENT_PORT: 8001
+    ports:
+      - "8001:8001"
+    depends_on:
+      store-api:
+        condition: service_healthy
+    command: uvicorn orders_agent:app --host 0.0.0.0 --port 8001
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8001/health')"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  orchestrator:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: shophub-agent:latest
+    environment:
+      LLM_MODE: ${LLM_MODE:-fake}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4.1-mini}
+      CHECKPOINTER: postgres
+      DATABASE_URL: postgresql://shophub:shophub@postgres:5432/shophub
+      STORE_API_URL: http://store-api:8002
+      ORDERS_AGENT_URL: http://orders-agent:8001
+      ORDERS_AGENT_PUBLIC_URL: http://orders-agent:8001
+      ORCHESTRATOR_PORT: 8000
+    ports:
+      - "8000:8000"
+    depends_on:
+      orders-agent:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    command: uvicorn orchestrator:app --host 0.0.0.0 --port 8000
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  shophub_postgres_data:
