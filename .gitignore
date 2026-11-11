@@ -1,0 +1,16 @@
+.env
+.venv/
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.tox/
+.coverage
+htmlcov/
+*.egg-info/
+*.egg
+dist/
+build/
+*.swp
+*.swo
+.DS_Store
