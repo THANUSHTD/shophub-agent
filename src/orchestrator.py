@@ -497,10 +497,17 @@ async def lifespan(app: FastAPI):
     """
     if _config.CHECKPOINTER == "postgres":
         from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
-        async with AsyncPostgresSaver.from_conn_string(_config.DATABASE_URL) as saver:
-            await saver.setup()
-            app.state.graph = build_graph(saver)
-            yield
+        try:
+            async with AsyncPostgresSaver.from_conn_string(_config.DATABASE_URL) as saver:
+                await saver.setup()
+                app.state.graph = build_graph(saver)
+                yield
+        except Exception as e:
+            raise RuntimeError(
+                f"\n\n❌ [ShopHub Orchestrator] Failed to connect to PostgreSQL at '{_config.DATABASE_URL}'.\n"
+                f"   Ensure Postgres is running via 'docker compose up -d postgres'\n"
+                f"   or switch to in-memory mode by running with 'CHECKPOINTER=memory'.\n"
+            ) from e
     else:
         app.state.graph = build_graph(InMemorySaver())
         yield

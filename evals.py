@@ -17,6 +17,10 @@ import sys
 from pathlib import Path
 from typing import Any
 
+# Default to fake-LLM mode (offline) unless --real is explicitly passed
+if "--real" not in sys.argv:
+    os.environ["LLM_MODE"] = "fake"
+
 # Ensure workspace root and src/ are on sys.path
 _root_dir = str(Path(__file__).resolve().parent)
 _src_dir = str(Path(__file__).resolve().parent / "src")
