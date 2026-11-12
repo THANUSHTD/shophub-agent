@@ -32,6 +32,7 @@ services:
       dockerfile: Dockerfile
     image: shophub-agent:latest
     environment:
+      PYTHONPATH: /home/shophub/app/src:/home/shophub/app
       LLM_MODE: ${LLM_MODE:-fake}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4.1-mini}
@@ -52,6 +53,7 @@ services:
       dockerfile: Dockerfile
     image: shophub-agent:latest
     environment:
+      PYTHONPATH: /home/shophub/app/src:/home/shophub/app
       STORE_API_URL: http://store-api:8002
       ORDERS_AGENT_URL: http://orders-agent:8001
       ORDERS_AGENT_PUBLIC_URL: http://orders-agent:8001
@@ -74,8 +76,10 @@ services:
       dockerfile: Dockerfile
     image: shophub-agent:latest
     environment:
+      PYTHONPATH: /home/shophub/app/src:/home/shophub/app
       LLM_MODE: ${LLM_MODE:-fake}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
       OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4.1-mini}
       CHECKPOINTER: postgres
       DATABASE_URL: postgresql://shophub:shophub@postgres:5432/shophub

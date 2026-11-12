@@ -18,24 +18,47 @@ import httpx
 ORCHESTRATOR_URL = "http://127.0.0.1:8000"
 
 
+def _bearer(token: str) -> str:
+    return token if token.startswith("Bearer ") else f"Bearer {token}"
+
+
 async def chat(token: str, thread: str, message: str):
     url = f"{ORCHESTRATOR_URL}/chat/stream"
+    current_event = "message"
     async with httpx.AsyncClient(timeout=60.0) as client:
         async with client.stream(
             "POST", url,
             json={"thread_id": thread, "message": message},
-            headers={"Authorization": token},
+            headers={"Authorization": _bearer(token)},
         ) as response:
             async for line in response.aiter_lines():
                 if not line:
                     continue
-                if line.startswith("data: "):
-                    data = json.loads(line[6:])
-                    event = data.get("event", "message")
-                    payload = data.get("data", {})
-                    if isinstance(payload, str):
-                        payload = json.loads(payload)
-                    print(f"[{event}] {json.dumps(payload)}")
+                if line.startswith("event: "):
+                    current_event = line[7:].strip()
+                elif line.startswith("data: "):
+                    raw_data = line[6:].strip()
+                    try:
+                        payload = json.loads(raw_data)
+                    except Exception:
+                        payload = raw_data
+                    if current_event == "token":
+                        content = payload.get("content", "") if isinstance(payload, dict) else str(payload)
+                        print(content, end="", flush=True)
+                    elif current_event == "tool_started":
+                        print(f"\n[Tool Started] {json.dumps(payload)}")
+                    elif current_event == "tool_finished":
+                        tool_name = payload.get("tool", "") if isinstance(payload, dict) else ""
+                        print(f"\n[Tool Finished] {tool_name}")
+                    elif current_event == "proposal":
+                        print(f"\n[Proposal Created] {json.dumps(payload, indent=2)}")
+                    elif current_event == "done":
+                        print("\n[Done]")
+                    elif current_event == "error":
+                        print(f"\n[Error] {payload}")
+                    else:
+                        print(f"\n[{current_event}] {payload}")
+
 
 
 async def approve(token: str, thread: str, proposal_id: str):
@@ -52,9 +75,10 @@ async def _decision(token, thread, proposal_id, decision):
         resp = await client.post(
             url,
             json={"thread_id": thread, "proposal_id": proposal_id},
-            headers={"Authorization": token},
+            headers={"Authorization": _bearer(token)},
         )
         print(json.dumps(resp.json(), indent=2))
+
 
 
 def main():

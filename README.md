@@ -102,7 +102,7 @@ Start each service in a separate terminal (ports 8002, 8001, 8000):
 ```powershell
 .venv\Scripts\Activate.ps1
 $env:STORE_API_PORT="8002"
-uvicorn store_api:app --host 127.0.0.1 --port 8002
+uvicorn src.store_api:app --host 127.0.0.1 --port 8002
 ```
 
 **Terminal 2 - Orders Agent:**
@@ -111,7 +111,7 @@ uvicorn store_api:app --host 127.0.0.1 --port 8002
 $env:STORE_API_URL="http://127.0.0.1:8002"
 $env:ORDERS_AGENT_URL="http://127.0.0.1:8001"
 $env:ORDERS_AGENT_PUBLIC_URL="http://127.0.0.1:8001"
-uvicorn orders_agent:app --host 127.0.0.1 --port 8001
+uvicorn src.orders_agent:app --host 127.0.0.1 --port 8001
 ```
 
 **Terminal 3 - Orchestrator:**
@@ -120,7 +120,7 @@ uvicorn orders_agent:app --host 127.0.0.1 --port 8001
 $env:STORE_API_URL="http://127.0.0.1:8002"
 $env:ORDERS_AGENT_URL="http://127.0.0.1:8001"
 $env:ORDERS_AGENT_PUBLIC_URL="http://127.0.0.1:8001"
-uvicorn orchestrator:app --host 127.0.0.1 --port 8000
+uvicorn src.orchestrator:app --host 127.0.0.1 --port 8000
 ```
 
 ## Running tests
@@ -286,15 +286,18 @@ curl.exe http://localhost:8002/orders/lookup?id=1042 `
 ## Project structure
 
 ```
-store_api.py        R0 mock store API + seed data
-orders_agent.py     R2 A2A server (deterministic, no LLM)
-orchestrator.py     R1/R5/R6/R7 LangGraph graph + chat API (SSE, approve, reject)
-guardrails.py       R4 redaction, injection neutralisation, fail-closed auth
-llm.py              get_llm() factory + deterministic FakeChatModel
-config.py           env settings only
-evals.py            R9 eval harness: python evals.py
-client.py           SSE demo client + approve/reject helpers
-tests/              pytest suite
-Dockerfile          multi-stage, non-root image
-docker-compose.yml  4 services (store-api, orders-agent, orchestrator, postgres)
+src/
+  orchestrator.py     R1/R5/R6/R7 LangGraph graph + chat API (SSE, approve, reject)
+  orders_agent.py     R2 A2A server (deterministic, no LLM)
+  store_api.py        R0 mock store API + seed data
+  guardrails.py       R4 redaction, injection neutralisation, fail-closed auth
+  llm.py              get_llm() factory + deterministic FakeChatModel
+  config.py           env settings only
+tests/                pytest suite (48 tests)
+docs/                 task specification & architecture assets
+evals.py              R9 eval harness: python evals.py
+client.py             SSE demo client + approve/reject helpers
+DESIGN.md             R11 technical architecture document
+Dockerfile            multi-stage, non-root image
+docker-compose.yml    4 services (store-api, orders-agent, orchestrator, postgres)
 ```

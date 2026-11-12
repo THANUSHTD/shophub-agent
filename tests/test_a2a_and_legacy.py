@@ -70,6 +70,7 @@ async def test_skill_call_returns_envelope(client, orders_url, token_a):
 async def test_skill_call_unknown_order_envelope(client, orders_url, token_a):
     async with httpx.AsyncClient() as http:
         result = await _lookup_via_a2a(http, orders_url, token_a, "9999")
+    assert result is not None
     assert result["ok"] is False
     assert result["error"] == "ORDER_NOT_FOUND"
 
@@ -122,7 +123,7 @@ async def test_token_forwarded_unchanged(client, store_url, token_a):
 @pytest.mark.asyncio
 async def test_orchestrator_a2a_client_discovers_card(orders_url, token_a):
     """The orchestrator's A2A client discovers the card dynamically."""
-    from orchestrator import a2a_client
+    from src.orchestrator import a2a_client
 
     async with httpx.AsyncClient() as http:
         # Reset the cached card so it re-discovers

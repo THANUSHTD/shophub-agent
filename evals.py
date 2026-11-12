@@ -14,16 +14,24 @@ import json
 import os
 import re
 import sys
+from pathlib import Path
 from typing import Any
+
+# Ensure workspace root and src/ are on sys.path
+_root_dir = str(Path(__file__).resolve().parent)
+_src_dir = str(Path(__file__).resolve().parent / "src")
+for _p in (_root_dir, _src_dir):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 
 import httpx
 
-from config import MERCHANT_TOKENS
-from guardrails import sanitize_order
-from llm import FakeChatModel
-from orchestrator import build_graph, a2a_client, set_token
-from orders_agent import create_app as create_orders_app
-from store_api import create_app as create_store_app
+from src.config import MERCHANT_TOKENS
+from src.guardrails import sanitize_order
+from src.llm import FakeChatModel
+from src.orchestrator import build_graph, a2a_client, set_token
+from src.orders_agent import create_app as create_orders_app
+from src.store_api import create_app as create_store_app
 
 from langgraph.checkpoint.memory import InMemorySaver
 

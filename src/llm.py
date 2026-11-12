@@ -9,10 +9,12 @@ so tests can assert no PII reached the model.
 from __future__ import annotations
 
 import asyncio
+import os
 import re
-from typing import Any, Iterator, AsyncIterator
+from typing import Any, Iterator, AsyncIterator, Sequence, Callable
 
 from langchain_core.language_models.chat_models import BaseChatModel
+from langchain_core.tools import BaseTool
 from langchain_core.messages import (
     AIMessage,
     AIMessageChunk,
@@ -29,7 +31,7 @@ from langchain_core.callbacks import (
 from pydantic import PrivateAttr
 from langchain_openai import ChatOpenAI
 
-from config import LLM_MODE, OPENAI_API_KEY, OPENAI_MODEL
+from config import LLM_MODE, OPENAI_API_KEY, OPENAI_MODEL, OPENAI_BASE_URL
 
 
 # Order ids are exactly 4 digits.
@@ -88,7 +90,13 @@ class FakeChatModel(BaseChatModel):
     def _identifying_params(self) -> dict[str, Any]:
         return {"model": "fake-shophub", "obedient": self.obedient}
 
-    def bind_tools(self, tools: list[Any], **kwargs: Any) -> "FakeChatModel":
+    def bind_tools(
+        self,
+        tools: Sequence[dict[str, Any] | type[Any] | Callable[..., Any] | BaseTool],
+        *,
+        tool_choice: str | None = None,
+        **kwargs: Any,
+    ) -> Any:
         self._bound_tools = list(tools or [])
         return self
 
@@ -290,10 +298,22 @@ class FakeChatModel(BaseChatModel):
 
 def get_llm():
     """Factory: returns a ChatOpenAI (openai mode) or FakeChatModel (fake mode)."""
-    if LLM_MODE == "openai":
-        if not OPENAI_API_KEY:
+    mode = os.environ.get("LLM_MODE", LLM_MODE)
+    if mode == "openai":
+        api_key = os.environ.get("OPENAI_API_KEY", OPENAI_API_KEY)
+        if not api_key:
             raise RuntimeError(
                 "OPENAI_API_KEY is required when LLM_MODE=openai. Set it in the environment or .env."
             )
-        return ChatOpenAI(model=OPENAI_MODEL, temperature=0, streaming=True)
+        model = os.environ.get("OPENAI_MODEL", OPENAI_MODEL)
+        base_url = os.environ.get("OPENAI_BASE_URL", os.environ.get("OPENAI_API_BASE", OPENAI_BASE_URL))
+        kwargs: dict[str, Any] = {
+            "model": model,
+            "temperature": 0,
+            "streaming": True,
+            "api_key": api_key,
+        }
+        if base_url:
+            kwargs["base_url"] = base_url
+        return ChatOpenAI(**kwargs)
     return FakeChatModel(obedient=False)

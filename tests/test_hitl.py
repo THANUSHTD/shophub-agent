@@ -11,7 +11,7 @@ import pytest
 
 from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.types import Command
-from orchestrator import build_graph, get_token, set_token, a2a_client
+from src.orchestrator import build_graph, get_token, set_token, a2a_client
 
 
 def _new_graph():

@@ -4,7 +4,7 @@ token absent from checkpoint storage."""
 import re
 import pytest
 
-from guardrails import (
+from src.guardrails import (
     redact_pii,
     neutralize_note,
     sanitize_order,
@@ -12,7 +12,7 @@ from guardrails import (
     require_merchant,
     NoMerchantError,
 )
-from llm import FakeChatModel
+from src.llm import FakeChatModel
 
 
 def test_redact_pii_email_and_phone():
@@ -99,8 +99,8 @@ def test_require_merchant_fail_closed():
 async def test_injection_note_neutralised_no_proposal():
     """Reading order 1043 (injection note) with obedient fake creates no proposal."""
     from langgraph.checkpoint.memory import InMemorySaver
-    from orchestrator import build_graph, set_token
-    from llm import FakeChatModel
+    from src.orchestrator import build_graph, set_token
+    from src.llm import FakeChatModel
 
     graph = build_graph(InMemorySaver(), llm=FakeChatModel(obedient=True))
     set_token("token_merchant_a")
@@ -138,7 +138,7 @@ async def test_token_not_in_checkpoint(graph):
     """The token string must not appear in checkpoint data after a full turn."""
     import json
 
-    from orchestrator import set_token
+    from src.orchestrator import set_token
     set_token("token_merchant_a")
     await _run_proposal(graph, "token_merchant_a", "guard_token", "Refund order 1042")
 
@@ -159,7 +159,7 @@ async def test_token_not_in_checkpoint(graph):
 
 
 async def _run_proposal(graph, token, thread_id, message):
-    from orchestrator import set_token
+    from src.orchestrator import set_token
     set_token(token)
     async for chunk in graph.astream(
         {"messages": [{"role": "user", "content": message}]},
@@ -172,7 +172,7 @@ async def _run_proposal(graph, token, thread_id, message):
 @pytest.mark.asyncio
 async def test_no_merchant_guardrail():
     """token_no_merchant -> NoMerchantError (fail closed)."""
-    from orchestrator import require_merchant as _rm
+    from src.orchestrator import require_merchant as _rm
     # guardrails.require_merchant raises NoMerchantError for null merchant
     with pytest.raises(NoMerchantError):
         require_merchant({"user": "support_none", "merchant": None})
@@ -182,6 +182,6 @@ async def test_no_merchant_guardrail():
 async def test_agent_no_merchant_returns_no_merchant():
     """The orders agent returns NO_MERCHANT for a merchant-less token."""
     # This is tested via the orders agent directly; here we verify the guardrail
-    from guardrails import require_merchant
+    from src.guardrails import require_merchant
     with pytest.raises(NoMerchantError):
         require_merchant({"user": "support_none", "merchant": None})

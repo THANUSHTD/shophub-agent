@@ -10,20 +10,32 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+
+# Unit tests run with deterministic FakeChatModel (no network calls, fully deterministic)
+os.environ["LLM_MODE"] = "fake"
+
 import sys
+from pathlib import Path
 import threading
 from typing import Any
+
+# Ensure workspace root and src/ are on sys.path for test discovery
+_root_dir = str(Path(__file__).resolve().parent.parent)
+_src_dir = str(Path(__file__).resolve().parent.parent / "src")
+for _p in (_root_dir, _src_dir):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 
 import httpx
 import pytest
 import uvicorn
 
-from config import MERCHANT_TOKENS
-from guardrails import sanitize_order
-from llm import FakeChatModel
-from orchestrator import create_app, build_graph, a2a_client, _token_var
-from orders_agent import create_app as create_orders_app
-from store_api import create_app as create_store_app
+from src.config import MERCHANT_TOKENS
+from src.guardrails import sanitize_order
+from src.llm import FakeChatModel
+from src.orchestrator import create_app, build_graph, a2a_client, _token_var
+from src.orders_agent import create_app as create_orders_app
+from src.store_api import create_app as create_store_app
 
 
 def _free_port() -> int:

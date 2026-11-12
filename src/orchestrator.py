@@ -10,16 +10,18 @@ Google's A2A protocol (JSON-RPC 2.0 over HTTP, discovered via Agent Card).
 
 from __future__ import annotations
 
+import contextlib
 import contextvars
 import json
 import os
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Annotated
+from typing import Any, Annotated, TypedDict, cast
 
 import httpx
-from fastapi import FastAPI, HTTPException, Request, status
+from fastapi import FastAPI, HTTPException, Request, status, Depends
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from pydantic import BaseModel, Field
 from sse_starlette.sse import EventSourceResponse
 from google.protobuf import json_format
 from google.protobuf.struct_pb2 import Struct, Value
@@ -62,7 +64,7 @@ def get_token() -> str | None:
 # LangGraph state
 # ---------------------------------------------------------------------------
 
-class State(dict):
+class State(TypedDict):
     messages: Annotated[list[Any], add_messages]
     pending_proposal: dict[str, Any] | None
 
@@ -178,7 +180,7 @@ def agent_node(state: State) -> State:
 
 
 # read_tool: list_orders / lookup_order / search_customer_orders
-async def read_tool(state: State, config: RunnableConfig) -> State:
+async def read_tool(state: State, config: RunnableConfig) -> dict[str, Any]:
     token = get_token()
     tool_calls: list[dict[str, Any]] = []
     for m in reversed(state["messages"]):
@@ -203,7 +205,7 @@ async def read_tool(state: State, config: RunnableConfig) -> State:
     return {"messages": results}
 
 
-async def prepare_proposal(state: State, config: RunnableConfig) -> State:
+async def prepare_proposal(state: State, config: RunnableConfig) -> dict[str, Any]:
     token = get_token()
     tool_calls: list[dict[str, Any]] = []
     for m in reversed(state["messages"]):
@@ -268,7 +270,7 @@ async def prepare_proposal(state: State, config: RunnableConfig) -> State:
     return {"messages": outputs, "pending_proposal": proposal}
 
 
-async def approval(state: State, config: RunnableConfig) -> State:
+async def approval(state: State, config: RunnableConfig) -> dict[str, Any]:
     """Human approval via interrupt. Code before interrupt() has no side effects."""
     proposal = state.get("pending_proposal")
     if not proposal:
@@ -450,7 +452,7 @@ def build_graph(checkpointer=None, llm=None):
             ai = AIMessage(content=content or "I can help with your orders.")
         return {"messages": [ai]}
 
-    builder = StateGraph(State)
+    builder = StateGraph(cast(Any, State))
     builder.add_node("agent", agent_node_fn)
     builder.add_node("read_tool", read_tool)
     builder.add_node("prepare_proposal", prepare_proposal)
@@ -483,20 +485,70 @@ async def get_current_merchant() -> dict[str, Any] | None:
 
 
 # ---------------------------------------------------------------------------
+# R7: Application startup & checkpointer lifecycle
+# ---------------------------------------------------------------------------
+
+@contextlib.asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Initialise LangGraph checkpointer before serving requests (R7).
+
+    CHECKPOINTER=postgres  -> AsyncPostgresSaver backed by DATABASE_URL (setup tables on boot)
+    CHECKPOINTER=memory    -> InMemorySaver (default for local dev & testing)
+    """
+    if _config.CHECKPOINTER == "postgres":
+        from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+        async with AsyncPostgresSaver.from_conn_string(_config.DATABASE_URL) as saver:
+            await saver.setup()
+            app.state.graph = build_graph(saver)
+            yield
+    else:
+        app.state.graph = build_graph(InMemorySaver())
+        yield
+
+
+# ---------------------------------------------------------------------------
+# Schemas for Swagger UI & API Requests
+# ---------------------------------------------------------------------------
+
+bearer_scheme = HTTPBearer(auto_error=False)
+
+
+class ChatStreamRequest(BaseModel):
+    thread_id: str = Field(..., description="Unique thread identifier (e.g. t1)", examples=["t1"])
+    message: str = Field(..., description="User message to the assistant", examples=["Show paid orders"])
+
+
+class DecisionRequest(BaseModel):
+    thread_id: str = Field(..., description="Thread identifier (e.g. t1)", examples=["t1"])
+    proposal_id: str = Field(..., description="Proposal UUID to approve or reject")
+
+
+# ---------------------------------------------------------------------------
 # FastAPI app
 # ---------------------------------------------------------------------------
 
-def create_app(checkpointer=None) -> FastAPI:
-    app = FastAPI(title="ShopHub Orchestrator")
-    graph = build_graph(checkpointer)
+def create_app(checkpointer=None, lifespan=lifespan) -> FastAPI:
+    app_lifespan = None if checkpointer is not None else lifespan
+    app = FastAPI(title="ShopHub Orchestrator", lifespan=app_lifespan)
+    if checkpointer is not None:
+        app.state.graph = build_graph(checkpointer)
+    else:
+        app.state.graph = build_graph(InMemorySaver())
+
+    def _get_graph():
+        return getattr(app.state, "graph", None) or build_graph(checkpointer)
 
     @app.get("/health")
     async def health():
         return {"status": "ok"}
 
-    @app.post("/chat/stream")
-    async def chat_stream(request: Request):
-        auth = request.headers.get("authorization")
+    @app.post("/chat/stream", summary="Stream chat message via SSE")
+    async def chat_stream(
+        body: ChatStreamRequest,
+        request: Request,
+        credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
+    ):
+        auth = (f"Bearer {credentials.credentials}" if credentials else None) or request.headers.get("authorization")
         if not auth:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing bearer token")
         token = auth
@@ -508,15 +560,16 @@ def create_app(checkpointer=None) -> FastAPI:
                 me = resp.json()
         except Exception:
             pass
+        if me is None:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
         try:
             require_merchant(me)
         except NoMerchantError:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No merchant scoped to token")
         merchant = me["merchant"]
 
-        body = await request.json()
-        thread_id = body.get("thread_id")
-        message = body.get("message", "")
+        thread_id = body.thread_id
+        message = body.message
         if not thread_id or not message:
             raise HTTPException(status_code=400, detail="thread_id and message required")
 
@@ -524,6 +577,7 @@ def create_app(checkpointer=None) -> FastAPI:
         namespaced_thread = f"{merchant}:{thread_id}"
 
         set_token(token)
+        graph = _get_graph()
 
         async def event_gen():
             try:
@@ -562,7 +616,7 @@ def create_app(checkpointer=None) -> FastAPI:
                                     if getattr(m, "content", ""):
                                         yield {"event": "token", "data": json.dumps({"content": m.content})}
                 # Check for an interrupt (proposal awaiting approval).
-                state = graph.get_state(config={"configurable": {"thread_id": namespaced_thread}})
+                state = await graph.aget_state(config={"configurable": {"thread_id": namespaced_thread}})
                 if state.next and state.next[0] == "approval":
                     proposal = state.values.get("pending_proposal") or {}
                     yield {"event": "proposal", "data": json.dumps({
@@ -575,16 +629,29 @@ def create_app(checkpointer=None) -> FastAPI:
 
         return EventSourceResponse(event_gen())
 
-    @app.post("/chat/approve")
-    async def chat_approve(request: Request):
-        return await _decision(request, "approve")
+    @app.post("/chat/approve", summary="Approve a pending proposal")
+    async def chat_approve(
+        body: DecisionRequest,
+        request: Request,
+        credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
+    ):
+        return await _decision(body, request, credentials, "approve")
 
-    @app.post("/chat/reject")
-    async def chat_reject(request: Request):
-        return await _decision(request, "reject")
+    @app.post("/chat/reject", summary="Reject a pending proposal")
+    async def chat_reject(
+        body: DecisionRequest,
+        request: Request,
+        credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
+    ):
+        return await _decision(body, request, credentials, "reject")
 
-    async def _decision(request: Request, decision: str):
-        auth = request.headers.get("authorization")
+    async def _decision(
+        body: DecisionRequest,
+        request: Request,
+        credentials: HTTPAuthorizationCredentials | None,
+        decision: str,
+    ):
+        auth = (f"Bearer {credentials.credentials}" if credentials else None) or request.headers.get("authorization")
         if not auth:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing bearer token")
         token = auth
@@ -596,22 +663,24 @@ def create_app(checkpointer=None) -> FastAPI:
                 me = resp.json()
         except Exception:
             pass
+        if me is None:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
         try:
             require_merchant(me)
         except NoMerchantError:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No merchant scoped to token")
         merchant = me["merchant"]
 
-        body = await request.json()
-        thread_id = body.get("thread_id")
-        proposal_id = body.get("proposal_id")
+        thread_id = body.thread_id
+        proposal_id = body.proposal_id
         if not thread_id or not proposal_id:
             raise HTTPException(status_code=400, detail="thread_id and proposal_id required")
 
         namespaced_thread = f"{merchant}:{thread_id}"
         set_token(token)
+        graph = _get_graph()
 
-        state = graph.get_state(config={"configurable": {"thread_id": namespaced_thread}})
+        state = await graph.aget_state(config={"configurable": {"thread_id": namespaced_thread}})
         if state is None or state.values is None:
             raise HTTPException(status_code=404, detail="Thread not found")
         proposal = state.values.get("pending_proposal")
@@ -633,7 +702,7 @@ def create_app(checkpointer=None) -> FastAPI:
             raise HTTPException(status_code=500, detail=str(e))
 
         # Reload to report result.
-        state2 = graph.get_state(config={"configurable": {"thread_id": namespaced_thread}})
+        state2 = await graph.aget_state(config={"configurable": {"thread_id": namespaced_thread}})
         messages = state2.values.get("messages", []) if state2.values else []
         last_text = ""
         for m in reversed(messages):
@@ -642,9 +711,13 @@ def create_app(checkpointer=None) -> FastAPI:
                 break
         return {"status": "ok", "message": last_text or f"{decision}d"}
 
-    @app.get("/chat/{thread_id}/messages")
-    async def chat_messages(thread_id: str, request: Request):
-        auth = request.headers.get("authorization")
+    @app.get("/chat/{thread_id}/messages", summary="Get thread message history")
+    async def chat_messages(
+        thread_id: str,
+        request: Request,
+        credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
+    ):
+        auth = (f"Bearer {credentials.credentials}" if credentials else None) or request.headers.get("authorization")
         if not auth:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing bearer token")
         token = auth
@@ -656,6 +729,8 @@ def create_app(checkpointer=None) -> FastAPI:
                 me = resp.json()
         except Exception:
             pass
+        if me is None:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
         try:
             require_merchant(me)
         except NoMerchantError:
@@ -663,7 +738,8 @@ def create_app(checkpointer=None) -> FastAPI:
         merchant = me["merchant"]
         namespaced_thread = f"{merchant}:{thread_id}"
         set_token(token)
-        state = graph.get_state(config={"configurable": {"thread_id": namespaced_thread}})
+        graph = _get_graph()
+        state = await graph.aget_state(config={"configurable": {"thread_id": namespaced_thread}})
         messages = state.values.get("messages", []) if state and state.values else []
         out = []
         for m in messages:
@@ -678,10 +754,13 @@ def create_app(checkpointer=None) -> FastAPI:
     return app
 
 
+# ---------------------------------------------------------------------------
+# Default application instance
+# ---------------------------------------------------------------------------
+
 app = create_app()
 
 if __name__ == "__main__":
-    import os
     import uvicorn
     port = int(os.environ.get("ORCHESTRATOR_PORT", "8000"))
     uvicorn.run(app, host="0.0.0.0", port=port)

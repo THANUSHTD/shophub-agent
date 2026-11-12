@@ -35,7 +35,8 @@ FROM python:3.12-slim AS runtime
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PATH="/opt/venv/bin:$PATH"
+    PATH="/opt/venv/bin:$PATH" \
+    PYTHONPATH="/home/shophub/app/src:/home/shophub/app:$PYTHONPATH"
 
 # Create non-root user.
 RUN groupadd -r shophub && useradd -r -g shophub -d /home/shophub -s /sbin/nologin shophub
@@ -46,7 +47,8 @@ WORKDIR /home/shophub/app
 COPY --from=builder /opt/venv /opt/venv
 
 # Copy application code.
-COPY store_api.py orders_agent.py orchestrator.py llm.py guardrails.py config.py client.py evals.py ./
+COPY src ./src
+COPY client.py evals.py ./
 COPY tests ./tests
 
 # Create directories and set ownership.

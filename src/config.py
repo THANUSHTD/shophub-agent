@@ -5,6 +5,35 @@ and Docker Compose; production must override via environment.
 """
 
 import os
+from pathlib import Path
+
+
+def _load_dotenv_if_present() -> None:
+    """Load key-value pairs from .env if present, without overwriting os.environ."""
+    candidates = [
+        Path(".env"),
+        Path(__file__).resolve().parent / ".env",
+        Path(__file__).resolve().parent.parent / ".env",
+    ]
+    for p in candidates:
+        if p.is_file():
+            try:
+                with open(p, "r", encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line or line.startswith("#") or "=" not in line:
+                            continue
+                        k, v = line.split("=", 1)
+                        k = k.strip()
+                        v = v.strip().strip("'\"")
+                        if k and k not in os.environ:
+                            os.environ[k] = v
+                break
+            except Exception:
+                pass
+
+
+_load_dotenv_if_present()
 
 
 def _env(name: str, default: str = "") -> str:
@@ -14,6 +43,7 @@ def _env(name: str, default: str = "") -> str:
 LLM_MODE = _env("LLM_MODE", "fake")
 OPENAI_API_KEY = _env("OPENAI_API_KEY", "")
 OPENAI_MODEL = _env("OPENAI_MODEL", "gpt-4.1-mini")
+OPENAI_BASE_URL = _env("OPENAI_BASE_URL", _env("OPENAI_API_BASE", ""))
 
 CHECKPOINTER = _env("CHECKPOINTER", "memory")
 DATABASE_URL = _env("DATABASE_URL", "postgresql://shophub:shophub@postgres:5432/shophub")

@@ -43,6 +43,8 @@ from a2a.types.a2a_pb2 import (
     Task,
     TaskState,
     TaskStatus,
+    SecurityScheme,
+    HTTPAuthSecurityScheme,
 )
 from a2a.utils.constants import AGENT_CARD_WELL_KNOWN_PATH
 
@@ -282,7 +284,9 @@ def create_app() -> FastAPI:
         version="1.0.0",
         capabilities=AgentCapabilities(streaming=False, push_notifications=False),
         security_schemes={
-            "bearer": {"http_auth_security_scheme": {"scheme": "bearer", "bearer_format": "JWT"}}
+            "bearer": SecurityScheme(
+                http_auth_security_scheme=HTTPAuthSecurityScheme(scheme="bearer", bearer_format="JWT")
+            )
         },
         security_requirements=[{"schemes": {"bearer": {"list": []}}}],
         supported_interfaces=[
@@ -292,10 +296,10 @@ def create_app() -> FastAPI:
         default_output_modes=["application/a2a+json"],
         skills=[
             AgentSkill(
-                id=s["id"],
-                name=s["name"],
-                description=s["description"],
-                tags=s["tags"],
+                id=str(s["id"]),
+                name=str(s["name"]),
+                description=str(s["description"]),
+                tags=list(s.get("tags", [])),
             )
             for s in SKILLS
         ],
