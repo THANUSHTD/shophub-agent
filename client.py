@@ -11,11 +11,12 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import sys
 
 import httpx
 
-ORCHESTRATOR_URL = "http://127.0.0.1:8000"
+ORCHESTRATOR_URL = os.environ.get("ORCHESTRATOR_URL", "http://localhost:8000")
 
 
 def _bearer(token: str) -> str:
@@ -25,7 +26,8 @@ def _bearer(token: str) -> str:
 async def chat(token: str, thread: str, message: str):
     url = f"{ORCHESTRATOR_URL}/chat/stream"
     current_event = "message"
-    async with httpx.AsyncClient(timeout=60.0) as client:
+    timeout = httpx.Timeout(60.0, read=None)
+    async with httpx.AsyncClient(timeout=timeout) as client:
         async with client.stream(
             "POST", url,
             json={"thread_id": thread, "message": message},
@@ -46,18 +48,20 @@ async def chat(token: str, thread: str, message: str):
                         content = payload.get("content", "") if isinstance(payload, dict) else str(payload)
                         print(content, end="", flush=True)
                     elif current_event == "tool_started":
-                        print(f"\n[Tool Started] {json.dumps(payload)}")
+                        print(f"\n[Tool Started] {json.dumps(payload)}", flush=True)
                     elif current_event == "tool_finished":
                         tool_name = payload.get("tool", "") if isinstance(payload, dict) else ""
-                        print(f"\n[Tool Finished] {tool_name}")
+                        print(f"\n[Tool Finished] {tool_name}", flush=True)
                     elif current_event == "proposal":
-                        print(f"\n[Proposal Created] {json.dumps(payload, indent=2)}")
+                        print(f"\n[Proposal Created] {json.dumps(payload, indent=2)}", flush=True)
                     elif current_event == "done":
-                        print("\n[Done]")
+                        print("\n[Done]", flush=True)
+                        break
                     elif current_event == "error":
-                        print(f"\n[Error] {payload}")
+                        print(f"\n[Error] {payload}", flush=True)
+                        break
                     else:
-                        print(f"\n[{current_event}] {payload}")
+                        print(f"\n[{current_event}] {payload}", flush=True)
 
 
 

@@ -1,15 +1,8 @@
-"""Application configuration. Reads environment variables only (fail-closed).
-
-Never log or return the values below. Defaults are safe for local development
-and Docker Compose; production must override via environment.
-"""
-
 import os
 from pathlib import Path
 
-
 def _load_dotenv_if_present() -> None:
-    """Load key-value pairs from .env if present, without overwriting os.environ."""
+
     candidates = [
         Path(".env"),
         Path(__file__).resolve().parent / ".env",

@@ -1,25 +1,12 @@
-"""R2: Orders sub-agent exposed over Google's A2A protocol (JSON-RPC 2.0 over HTTP).
-
-Deterministic: contains NO LLM. The executor maps a skill request to a Store API
-call, forwards the bearer token from the incoming HTTP Authorization header,
-and returns every result wrapped in a DataPart envelope.
-
-Serves the Agent Card at /.well-known/agent-card.json. Port 8001.
-"""
-
 from __future__ import annotations
-
-import asyncio
 import os
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
-
 import httpx
 from fastapi import FastAPI
 from google.protobuf import json_format
 from google.protobuf.struct_pb2 import Struct, Value
-
 from a2a.server.agent_execution import AgentExecutor, RequestContext
 from a2a.server.events.event_queue import EventQueue
 from a2a.server.request_handlers import DefaultRequestHandler
@@ -35,29 +22,19 @@ from a2a.types.a2a_pb2 import (
     AgentInterface,
     AgentSkill,
     Artifact,
-    Message,
     Part,
-    Role,
-    SendMessageRequest,
-    SendMessageConfiguration,
     Task,
     TaskState,
     TaskStatus,
     SecurityScheme,
     HTTPAuthSecurityScheme,
 )
-from a2a.utils.constants import AGENT_CARD_WELL_KNOWN_PATH
-
-from config import MERCHANT_TOKENS
-import config as _config
 from guardrails import sanitize_order
 
 STORE_TIMEOUT = httpx.Timeout(10.0, connect=5.0)
 
-
 def _now() -> datetime:
     return datetime.now(timezone.utc)
-
 
 SKILLS = [
     {
@@ -126,12 +103,6 @@ def _completed_task(context: RequestContext, envelope: dict[str, Any]) -> Task:
 
 
 def _bearer_token(context: RequestContext) -> str | None:
-    """Read the bearer token from the incoming HTTP Authorization header.
-
-    The SDK populates ServerCallContext.state['headers'] with the request
-    headers. Returns the raw token with any "Bearer " prefix stripped, so it
-    can be re-prefixed when forwarded to the Store API.
-    """
     headers = context.call_context.state.get("headers") or {}
     auth = headers.get("authorization") or headers.get("Authorization")
     if auth is not None and auth.lower().startswith("bearer "):
@@ -143,7 +114,8 @@ async def _store_request(client: httpx.AsyncClient, method: str, path: str, toke
     headers = {}
     if token:
         headers["Authorization"] = f"Bearer {token}"
-    return await client.request(method, f"{os.environ.get('STORE_API_URL', 'http://store-api:8002')}{path}", headers=headers, **kwargs)
+    store_url = os.environ.get("STORE_API_URL", "http://store-api:8002")
+    return await client.request(method, f"{store_url}{path}", headers=headers, **kwargs)
 
 
 class OrdersExecutor(AgentExecutor):
@@ -183,11 +155,11 @@ class OrdersExecutor(AgentExecutor):
             if e.response.status_code == 409:
                 return _envelope(False, error="INVALID_STATE", message="Invalid state transition")
             return _envelope(False, error="UPSTREAM_ERROR", message=str(e))
-        except Exception as e:  # pragma: no cover - defensive
+        except Exception as e:
             return _envelope(False, error="UPSTREAM_ERROR", message=str(e))
 
-    async def _list_orders(self, client, token, merchant, args):
-        params = {}
+    async def _list_orders(self, client: httpx.AsyncClient, token: str | None, merchant: str, args: dict[str, Any]):
+        params: dict[str, Any] = {}
         if args.get("status"):
             params["status"] = args["status"]
         resp = await _store_request(client, "GET", "/orders", token, params=params)
@@ -210,7 +182,7 @@ class OrdersExecutor(AgentExecutor):
             orders = filtered
         return _envelope(True, data=[sanitize_order(o) for o in orders])
 
-    async def _lookup_order(self, client, token, merchant, args):
+    async def _lookup_order(self, client: httpx.AsyncClient, token: str | None, merchant: str, args: dict[str, Any]):
         oid = args.get("id")
         resp = await _store_request(client, "GET", "/orders/lookup", token, params={"id": oid})
         resp.raise_for_status()
@@ -219,7 +191,7 @@ class OrdersExecutor(AgentExecutor):
             return _envelope(False, error="ORDER_NOT_FOUND", message="Order not found")
         return _envelope(True, data=sanitize_order(body["data"]))
 
-    async def _search_customer_orders(self, client, token, merchant, args):
+    async def _search_customer_orders(self, client: httpx.AsyncClient, token: str | None, merchant: str, args: dict[str, Any]):
         name = args.get("name", "")
         resp = await _store_request(client, "GET", "/orders", token, params={"status": None})
         resp.raise_for_status()
@@ -229,7 +201,7 @@ class OrdersExecutor(AgentExecutor):
         matched.sort(key=lambda o: o.get("placed_at") or "", reverse=True)
         return _envelope(True, data=[sanitize_order(o) for o in matched])
 
-    async def _write(self, client, token, merchant, path, args):
+    async def _write(self, client: httpx.AsyncClient, token: str | None, merchant: str, path: str, args: dict[str, Any]):
         oid = args.get("id")
         resp = await _store_request(client, "POST", path, token, json={"id": oid})
         if resp.status_code == 404:
@@ -241,7 +213,6 @@ class OrdersExecutor(AgentExecutor):
 
     async def execute(self, context: RequestContext, event_queue: EventQueue):
         token = _bearer_token(context)
-        # Parse the skill request from the incoming DataPart.
         skill = None
         args: dict[str, Any] = {}
         parts = context.message.parts if context.message and context.message.parts else []
@@ -259,7 +230,6 @@ class OrdersExecutor(AgentExecutor):
         if skill is None:
             envelope = _envelope(False, error="INVALID_STATE", message="No skill specified in DataPart")
         else:
-            # One shared httpx client per call.
             async with httpx.AsyncClient(timeout=STORE_TIMEOUT) as client:
                 envelope = await self._dispatch(client, token, skill, args)
 
@@ -276,7 +246,6 @@ class OrdersExecutor(AgentExecutor):
 
 
 def create_app() -> FastAPI:
-    import os
     public_url = os.environ.get("ORDERS_AGENT_PUBLIC_URL") or "http://orders-agent:8001"
     card = AgentCard(
         name="ShopHub Orders Agent",
@@ -327,7 +296,6 @@ def create_app() -> FastAPI:
 app = create_app()
 
 if __name__ == "__main__":
-    import os
     import uvicorn
     port = int(os.environ.get("ORDERS_AGENT_PORT", "8001"))
     uvicorn.run(app, host="0.0.0.0", port=port)

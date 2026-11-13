@@ -1,26 +1,13 @@
-"""LLM factory + deterministic FakeChatModel.
-
-get_llm() reads LLM_MODE (fake|openai). OpenAI mode uses ChatOpenAI with the
-key from OPENAI_API_KEY. Fake mode is a scripted BaseChatModel that decides
-tool calls from the user's message text and records every prompt in seen_prompts
-so tests can assert no PII reached the model.
-"""
-
 from __future__ import annotations
-
-import asyncio
 import os
 import re
 from typing import Any, Iterator, AsyncIterator, Sequence, Callable
-
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.tools import BaseTool
 from langchain_core.messages import (
-    AIMessage,
     AIMessageChunk,
     BaseMessage,
     HumanMessage,
-    SystemMessage,
     ToolMessage,
 )
 from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResult
@@ -30,15 +17,13 @@ from langchain_core.callbacks import (
 )
 from pydantic import PrivateAttr
 from langchain_openai import ChatOpenAI
-
 from config import LLM_MODE, OPENAI_API_KEY, OPENAI_MODEL, OPENAI_BASE_URL
+from prompts import HELP_MESSAGE
+
+HELP = HELP_MESSAGE
 
 
-# Order ids are exactly 4 digits.
 ORDER_ID_RE = re.compile(r"\b(\d{4})\b")
-# A customer name: one or more capitalised words.
-NAME_RE = re.compile(r"\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\b")
-
 _REFUND_RE = re.compile(r"\brefund\s+order\s+(\d{4})\b", re.IGNORECASE)
 _CANCEL_RE = re.compile(r"\bcancel\s+order\s+(\d{4})\b", re.IGNORECASE)
 _LOOKUP_RE = re.compile(
@@ -58,23 +43,8 @@ _NOT_SHIPPED_RE = re.compile(
     r"\bnot\s+shipped\s+(?:in|for)\s+(\d+)\s+days\b", re.IGNORECASE
 )
 
-HELP = (
-    "I can help with your store's orders. Try: 'show paid orders', "
-    "'paid orders older than 3 days', 'find order 1042', 'what did Maria "
-    "Fernandes order', 'refund order 1042' or 'cancel order 1044'. "
-    "Refunds and cancellations are proposed for your approval first."
-)
-
 
 class FakeChatModel(BaseChatModel):
-    """Deterministic scripted chat model.
-
-    Decides tool calls from the latest human message via regex. Streams real
-    chunks. Records every prompt it receives in `seen_prompts`. `obedient=True`
-    (tests/evals only) also emits propose_refund when it sees "refund" inside
-    tool output text.
-    """
-
     obedient: bool = False
     seen_prompts: list[str] = []
     _bound_tools: list[Any] = PrivateAttr(default_factory=list)
@@ -99,8 +69,6 @@ class FakeChatModel(BaseChatModel):
     ) -> Any:
         self._bound_tools = list(tools or [])
         return self
-
-    # -- sync stubs (we stream via _astream) --------------------------------
 
     def _generate(
         self,
@@ -135,8 +103,6 @@ class FakeChatModel(BaseChatModel):
         self.seen_prompts.append(self._prompt_text(messages))
         for chunk in self._emit(messages):
             yield chunk
-
-    # -- decision / emission ----------------------------------------------
 
     def _prompt_text(self, messages: list[BaseMessage]) -> str:
         parts: list[str] = []
@@ -188,8 +154,6 @@ class FakeChatModel(BaseChatModel):
 
     def _emit(self, messages: list[BaseMessage]) -> Iterator[ChatGenerationChunk]:
         last_human = self._last_human_text(messages)
-        # If the previous turn was a tool result, compose a final answer instead
-        # of re-deciding a tool call (except obedient-mode refund injection).
         last_is_tool = any(isinstance(m, ToolMessage) for m in messages[-2:])
         if last_is_tool:
             tool_text = self._last_tool_text(messages)
@@ -217,8 +181,6 @@ class FakeChatModel(BaseChatModel):
             yield ChatGenerationChunk(message=AIMessageChunk(content=ch))
 
     def _compose_answer(self, messages: list[BaseMessage]) -> str:
-        """Build a readable final answer from the tool JSON in the history."""
-        # Gather tool results in reverse (latest first).
         tool_results: list[tuple[str, str]] = []
         for m in reversed(messages):
             if isinstance(m, ToolMessage):
@@ -227,7 +189,6 @@ class FakeChatModel(BaseChatModel):
                     break
         if not tool_results:
             return HELP
-        # Use the latest tool result primarily.
         name, content = tool_results[0]
         answer = self._format_tool_result(name, content)
         if len(tool_results) > 1:
@@ -242,7 +203,6 @@ class FakeChatModel(BaseChatModel):
         except Exception:
             return content
 
-        # Strip the untrusted prefix if present.
         if isinstance(data, str):
             return data
         if not isinstance(data, dict):
@@ -297,7 +257,6 @@ class FakeChatModel(BaseChatModel):
 
 
 def get_llm():
-    """Factory: returns a ChatOpenAI (openai mode) or FakeChatModel (fake mode)."""
     mode = os.environ.get("LLM_MODE", LLM_MODE)
     if mode == "openai":
         api_key = os.environ.get("OPENAI_API_KEY", OPENAI_API_KEY)

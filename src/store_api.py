@@ -1,26 +1,15 @@
-"""R0: Mock multi-tenant store API.
-
-In-memory, built by a `create_app()` factory so tests/evals get a fresh seed.
-Tokens are MOCK FIXTURES - the only credentials allowed in this repo.
-Port 8002.
-"""
-
 from __future__ import annotations
-
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
-
 from fastapi import Depends, FastAPI, HTTPException, Query, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel
-
 from config import MERCHANT_TOKENS
 
 VALID_STATUSES = {"PLACED", "PAID", "SHIPPED", "DELIVERED", "CANCELLED", "REFUNDED"}
 
 bearer_scheme = HTTPBearer(auto_error=False)
-
 
 # ---------------------------------------------------------------------------
 # Seed data
